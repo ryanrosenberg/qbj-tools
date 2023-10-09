@@ -49,25 +49,6 @@ get_question_stats <- function(qbj, num){
 
 arcadia_question_stats <- imap(qbjs, get_question_stats)
 
-team_recoding <- read_csv('../stats/2022-arcadia/team-recoding.csv')
-
-map_df(arcadia_question_stats, "buzzes") %>% 
-  distinct(team) %>% 
-  left_join(team_recoding) %>% 
-  write_csv('../stats/2022-arcadia/team-recoding.csv' )
-
-
-player_recoding <- map_df(arcadia_question_stats, "buzzes") %>% 
-  left_join(team_recoding) %>% 
-  distinct(player, team = team_clean) %>% 
-  arrange(team, player)
-
-old_players <- read_csv('../stats/2022-arcadia/player-recoding.csv') 
-old_players %>% 
-  bind_rows(player_recoding %>% 
-              filter(!player %in% old_players$player)) %>% 
-write_csv('../stats/2022-arcadia/player-recoding.csv')
-
 map_df(arcadia_question_stats, "buzzes") %>% 
   write_csv('../stats/bhsat/bhsat-combined-buzzes.csv')
 
