@@ -2,7 +2,7 @@ from bs4 import BeautifulSoup
 import re
 import pandas as pd
 import numpy as np
-import requests as req
+from requests_html import HTMLSession
 
 def process_game(i, game):
     split_score = re.split('(?<=\d),\s', re.sub('\sOT$', '', game['score']))
@@ -247,7 +247,8 @@ def process_game_yf(i, game, url):
         return player_stats, team_stats
 
 def process_url(url):
-    r = req.get(url)
+    session = HTMLSession()
+    r = session.get(url)
     soup = BeautifulSoup(r.content, features="lxml")
 
     if len([el.get_text() for el in soup.find_all(['span', 'h5']) if re.search('YellowFruit', el.get_text())]) == 0:
