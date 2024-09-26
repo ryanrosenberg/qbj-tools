@@ -211,7 +211,7 @@ def process_game_yf(i, game, url):
         player_stats = player_stats.rename(
             columns={'15': 'powers', '10': 'gets', '-5': 'negs', 'Tot': 'pts'})
 
-        bonuses = re.split('\;\s', game['bonuses'][9:])
+        bonuses = re.split('(?<!push)\;\s', game['bonuses'][9:])
         bonuses = pd.DataFrame(
             [
                 {
