@@ -142,7 +142,10 @@ def process_game_yf(i, game, url):
         'https://hsquizbowl.org/db/tournaments/8328/stats/playoffs/games/',
         'https://hsquizbowl.org/db/tournaments/8340/stats/all_games/games/',
         'https://hsquizbowl.org/db/tournaments/8627/stats/combined/games/',
-        'https://hsquizbowl.org/db/tournaments/8698/stats/prelims/games/'
+        'https://hsquizbowl.org/db/tournaments/8698/stats/prelims/games/',
+        'https://hsquizbowl.org/db/tournaments/9151/stats/all_games/games/',
+        'https://hsquizbowl.org/db/tournaments/9045/stats/combined_all/games/',
+        'https://hsquizbowl.org/db/tournaments/9129/stats/final_%28all_games%29/games/'
     ):
         team1_players = raw_player_stats[0].iloc[:, 0:6].melt(
             id_vars=['TUH', '0', '10', '-5', 'Tot'],
