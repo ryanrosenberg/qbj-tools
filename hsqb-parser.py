@@ -2,21 +2,22 @@ from bs4 import BeautifulSoup
 import re
 import pandas as pd
 import numpy as np
-from requests_html import HTMLSession
+import cloudscraper
+from io import StringIO
 
 def process_game(i, game):
-    split_score = re.split('(?<=\d),\s', re.sub('\sOT$', '', game['score']))
+    split_score = re.split('(?<=\d),\s(?!I\sMarried)', re.sub('\sOT$', '', game['score']))
     team1 = re.match('^.*(?=\s[-\d]+$)', split_score[0])[0]
-    team2 = re.match('^.*(?=\s[-\d]+$)', split_score[1].replace(' Tie', ''))[0]
+    team2 = re.match('^.*(?=\s[-\d]+$)', re.sub(' Tie$', '', split_score[1]))[0]
 
     line_split = [el for el in re.split(
         '\\n', game['line']) if re.search(':', el)]
-    player_lines = {re.split('(?<!True):\s', el)[0]: re.split('(?<!True):\s', el)[
+    player_lines = {re.split('(?<!Guardians):\s', el, maxsplit=1)[0]: re.split('(?<!True):\s', el, maxsplit=1)[
         1] for el in line_split if not re.match('^Bonuses:', el)}
 
-    team1_players = [re.split('\s(?=[-\d])', player)
+    team1_players = [re.split('\s(?=-?\d)', player)
                         for player in re.split('(?<=\d),\s', player_lines[team1])]
-    team2_players = [re.split('\s(?=[-\d])', player)
+    team2_players = [re.split('\s(?=-?\d)', player)
                         for player in re.split('(?<=\d),\s', player_lines[team2])]
 
     if len(team1_players[0]) == 4:
@@ -27,6 +28,7 @@ def process_game(i, game):
         player_stats = pd.concat([team1_players, team2_players])
         player_stats[['gets', 'negs', 'pts']] = player_stats[[
             'gets', 'negs', 'pts']].astype(int)
+        player_stats['player'] = player_stats['player'].str.strip()
     else:
         team1_players = pd.DataFrame(team1_players, columns=[
                                         'player', 'powers', 'gets', 'negs', 'pts']).assign(team=team1)
@@ -35,12 +37,14 @@ def process_game(i, game):
         player_stats = pd.concat([team1_players, team2_players])
         player_stats[['powers', 'gets', 'negs', 'pts']] = player_stats[[
             'powers', 'gets', 'negs', 'pts']].astype(int)
+        player_stats['player'] = player_stats['player'].str.strip()
+        
 
-    bonuses = [re.split('(?<=\d),\s', el[9:])
+    bonuses = [re.split('(?<=\d),\s(?!I\sMarried)', el[9:])
                 for el in line_split if re.match('^Bonuses:', el)][0]
     boni = []
     for team in bonuses:
-        m = re.match(r'(.*)\s([\d]+)\s([\d]+)\s([\d\.]+)$', team)
+        m = re.match(r'(.*)\s([\d]+)\s([\d]+)\s([\d\.]+)$', team.strip())
         bon = {
             'team': m.group(1),
             'bonuses_heard': m.group(2),
@@ -82,8 +86,69 @@ def process_game(i, game):
 
     return (player_stats, team_stats)
 
+def process_game_cmst(i, game):
+    split_score = re.split('(?<=\d),\s(?!I\sMarried)', re.sub('\sOT$', '', game['score']))
+    print(split_score)
+    team1 = re.match('^.*(?=\s[-\d]+$)', split_score[0])[0]
+    team2 = re.match('^.*(?=\s[-\d]+$)', re.sub(' Tie$', '', split_score[1]))[0]
+
+    line_split = [el for el in re.split(
+        '\\n', game['line']) if re.search(':', el)]
+    player_lines = {re.split('(?<!Guardians):\s', el, maxsplit=1)[0]: re.split('(?<!True):\s', el, maxsplit=1)[
+        1] for el in line_split if not re.match('^Bonuses:', el)}
+    print(player_lines.keys())
+    team1_players = [re.split('\s(?=-?\d)', player)
+                        for player in re.split('(?<=\d),\s', player_lines[team1])]
+    team2_players = [re.split('\s(?=-?\d)', player)
+                        for player in re.split('(?<=\d),\s', player_lines[team2])]
+
+    team1_players = pd.DataFrame(team1_players, columns=[
+                                    'player', 'powers', 'gets', 'pts']).assign(team=team1)
+    team2_players = pd.DataFrame(team2_players, columns=[
+                                    'player', 'powers', 'gets', 'pts']).assign(team=team2)
+    player_stats = pd.concat([team1_players, team2_players])
+    player_stats['negs'] = 0
+    player_stats[['powers', 'gets', 'pts']] = player_stats[[
+        'powers', 'gets', 'pts']].astype(int)
+    player_stats['player'] = player_stats['player'].str.strip()
+    bonuses = [re.split('(?<=\d),\s(?!I\sMarried)', el[9:])
+                for el in line_split if re.match('^Bonuses:', el)][0]
+    print(bonuses)
+    boni = []
+    for team in bonuses:
+        m = re.match(r'(.*)\s([\d]+)\s([\d]+)\s([\d\.]+)$', team.strip())
+        bon = {
+            'team': m.group(1),
+            'bonuses_heard': m.group(2),
+            'bonus_pts': m.group(3),
+            'PPB': m.group(4)
+        }
+        boni.append(bon)
+    bonuses = pd.DataFrame(boni)
+    bonuses[['bonuses_heard', 'bonus_pts']] = bonuses[[
+        'bonuses_heard', 'bonus_pts']].astype(int)
+
+    team_stats = pd.DataFrame([
+        {
+            'team': team,
+            'powers': sum(player_stats[player_stats['team'] == team]['powers']),
+            'gets': sum(player_stats[player_stats['team'] == team]['gets']),
+            'negs': 0,
+            'tu_pts': sum(player_stats[player_stats['team'] == team]['pts'])
+        }
+        for team in [team1, team2]
+    ]).merge(bonuses, on='team')
+
+    team_stats['total_pts'] = team_stats['tu_pts'] + \
+        team_stats['bonus_pts']
+    team_stats['opponent'] = team_stats['team'].values[::-1]
+    player_stats['report_game_id'] = i
+    team_stats['report_game_id'] = i
+
+    return (player_stats, team_stats)
+
 def process_game_yf(i, game, url):
-    raw_player_stats = pd.read_html(str(game['table']), header=0)
+    raw_player_stats = pd.read_html(StringIO(str(game['table'])), header=0)
     if raw_player_stats[0].shape[1] == 11:
         team1_players = raw_player_stats[0].iloc[:, 0:5].melt(
             id_vars=['TUH', '10', '-5', 'Tot'],
@@ -249,9 +314,64 @@ def process_game_yf(i, game, url):
 
         return player_stats, team_stats
 
+def process_game_yf_cmst(i, game, url):
+    raw_player_stats = pd.read_html(StringIO(str(game['table'])), header=0)
+    team1_players = raw_player_stats[0].iloc[:, 0:5].melt(
+        id_vars=['TUH', '20', '10', 'Tot'],
+        var_name='team',
+        value_name='player'
+    )
+    team2_players = raw_player_stats[0].iloc[:, 6:12].melt(
+        id_vars=['TUH.1', '20.1', '10.1', 'Tot.1'],
+        var_name='team',
+        value_name='player'
+    ).rename(columns={'TUH.1': 'TUH', '20.1': '20', '10.1': '10', 'Tot.1': 'Tot'})
+    player_stats = pd.concat([team1_players, team2_players])
+    player_stats['negs'] = 0
+    player_stats = player_stats[~player_stats['player'].isin(
+        ['Total,', 'Total'])]
+    player_stats = player_stats[~player_stats['player'].isna()]
+    player_stats = player_stats.rename(
+        columns={'20': 'powers', '10': 'gets', 'Tot': 'pts'})
+
+    bonuses = re.split('\;\s', game['bonuses'][9:])
+    bonuses = pd.DataFrame(
+        [
+            {
+                'team': re.search('.*(?=\s\d+\sheard,)', team)[0].strip(),
+                'bonuses_heard': int(re.search('\d+(?=\sheard,)', team)[0]),
+                'bonus_pts': int(re.search('\d+(?=\spts,)', team)[0])
+            }
+            for team in bonuses
+        ],
+        columns=['team', 'bonuses_heard', 'bonus_pts']
+    )
+    bonuses[['bonuses_heard', 'bonus_pts']] = bonuses[[
+        'bonuses_heard', 'bonus_pts']].astype(int)
+    team_stats = pd.DataFrame([
+        {
+            'team': team.strip(),
+            'powers': sum(player_stats[player_stats['team'] == team]['powers']),
+            'gets': sum(player_stats[player_stats['team'] == team]['gets']),
+            'negs': 0,
+            'tu_pts': sum(player_stats[player_stats['team'] == team]['pts'])
+        }
+        for team in np.unique(player_stats['team'])
+    ])
+
+    team_stats = team_stats.merge(bonuses, on='team')
+    team_stats['total_pts'] = team_stats['tu_pts'] + \
+        team_stats['bonus_pts']
+    team_stats['opponent'] = team_stats['team'].values[::-1]
+    player_stats['report_game_id'] = i
+    team_stats['report_game_id'] = i
+
+    return player_stats, team_stats
+        
+
 def process_url(url):
-    session = HTMLSession()
-    r = session.get(url)
+    scraper = cloudscraper.create_scraper()
+    r = scraper.get(url)
     soup = BeautifulSoup(r.content, features="lxml")
 
     if len([el.get_text() for el in soup.find_all(['span', 'h5']) if re.search('YellowFruit', el.get_text())]) == 0:
@@ -327,7 +447,7 @@ def process_url(url):
         cur_round = []
         cur_round_name = ''
         headers = soup.find_all(["h3", "h2"])
-        for el in [el.get_text().replace('Round 8.1', 'Round 81') for el in headers]:
+        for el in [el.get_text().replace('Round 8.1', 'Round 81').replace('Round 8.2', 'Round 82') for el in headers]:
             if re.search('^Round\s[-\d]+$', el):
                 rounds[cur_round_name] = cur_round
                 cur_round = []
@@ -376,7 +496,7 @@ def process_url(url):
                 'report_game_id', 'team', 'round', 'opponent', 'gets', 'negs', 'bonuses_heard', 'bonus_pts', 'total_pts']]
         all_team_stats[['gets', 'negs', 'total_pts']] = all_team_stats[[
             'gets', 'negs', 'total_pts']].astype(int)
-    return all_player_stats, all_team_stats
+    return {'player_stats': all_player_stats, 'team_stats': all_team_stats}
         
 # urls = pd.read_csv('tournaments.csv')
 
