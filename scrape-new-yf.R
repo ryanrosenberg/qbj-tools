@@ -1,31 +1,14 @@
 library(tidyverse)
 library(rvest)
 library(reticulate)
-use_python('/opt/homebrew/opt/python@3/libexec/bin/python')
+use_python('/home/ryanr345/.pyenv/shims/python')
 source_python('scrape-page.py')
 
 page <- scrape_page(
-  'https://hsquizbowl.org/db/tournaments/9801/stats/all_games/games/'
+  'https://hsquizbowl.org/db/tournaments/9907/stats/all_games/games/'
+  # 'https://hsquizbowl.org/db/tournaments/9801/stats/all_games/games/'
 ) %>%
   read_html()
-
-match_meta <- page %>%
-  html_elements('div[id]') %>%
-  html_attr('id') %>%
-  tibble(el = .) %>%
-  separate(el, c("type", "id"), sep = '-') %>%
-  mutate(round = ifelse(type == "Round", id, NA)) %>%
-  fill(round) %>%
-  filter(type != "Round") %>%
-  select(-type)
-
-tossup_tables <- page %>%
-  html_elements('.boxScoreTable') %>%
-  map(html_table)
-
-bonus_tables <- page %>%
-  html_elements('table[width="50%"]') %>%
-  map(html_table)
 
 process_player_stats <- function(df) {
   if (ncol(df) == 6) {
@@ -70,20 +53,50 @@ process_team_stats <- function(tossups_df, bonuses_df) {
     )
 }
 
+match_meta <- page %>%
+  html_elements('div[id]') %>%
+  html_attr('id') %>%
+  tibble(el = .) %>%
+  mutate(
+    round = ifelse(
+      str_detect(el, "Round\\-\\d"),
+      el %>%
+        str_replace('-', ' '),
+      NA
+    )
+  ) %>%
+  fill(round) %>%
+  filter(str_detect(el, "Round\\-\\d", negate = T)) %>%
+  rename(id = el)
+
+html_element(page, css = '#Match_1130\\~WilliamsBDartmouthA')
+
+scorelines <- page %>%
+  html_elements('h3')
+
+tossup_tables <- page %>%
+  html_elements('.boxScoreTable') %>%
+  map(html_table)
+
+bonus_tables <- page %>%
+  html_table() %>%
+  keep(\(x) x[[1, 1]] == "Bonuses")
 
 matches <- match_meta %>%
+  mutate(
+    scorelines = scorelines %>% html_text()
+  ) %>%
+  filter(str_detect(scorelines, 'by forfeit$', negate = T)) %>%
   mutate(
     player_stats = map(tossup_tables, process_player_stats),
     team_stats = map2(tossup_tables, bonus_tables, process_team_stats)
   )
 
-return(
-  list(
-    "player_stats" = matches %>%
-      select(id, round, player_stats) %>%
-      unnest(player_stats),
-    "team_stats" = matches %>%
-      select(id, round, team_stats) %>%
-      unnest(team_stats)
-  )
+list(
+  "player_stats" = matches %>%
+    select(id, round, player_stats) %>%
+    unnest(player_stats),
+  "team_stats" = matches %>%
+    select(id, round, team_stats) %>%
+    unnest(team_stats)
 )
