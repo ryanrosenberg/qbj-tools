@@ -1,13 +1,14 @@
 library(tidyverse)
 library(rvest)
 library(reticulate)
-# use_python('/home/ryanr345/.pyenv/shims/python')
+library(magrittr)
+use_python('/home/ryanr345/.pyenv/shims/python')
 
-use_python('/opt/homebrew/bin/python3')
+# use_python('/opt/homebrew/bin/python3')
 source_python('scrape-page.py')
 
 page <- scrape_page(
-  'https://hsquizbowl.org/db/tournaments/9988/stats/all_games/games/'
+  'https://hsquizbowl.org/db/tournaments/9847/stats/overall/games/'
   # 'https://hsquizbowl.org/db/tournaments/9801/stats/all_games/games/'
 ) %>%
   read_html()
@@ -31,15 +32,16 @@ process_player_stats <- function(df, team1, team2) {
     filter(tuh != "TUH", tuh != "")
 
   df %>%
-    left_join(
-      tibble(
-        team = unique(df$team),
-        new_team = c(team1, team2)
-      ),
-      by = join_by(team)
-    ) %>%
-    select(-team) %>%
-    rename(team = new_team)
+    mutate(
+      team = ifelse(
+        team %>%
+          trimws() %>%
+          str_remove_all('\\.\\.\\.$') %>%
+          str_detect(team1),
+        team1,
+        team2
+      )
+    )
 }
 
 process_team_stats <- function(tossups_df, bonuses_df, team1, team2) {
@@ -70,15 +72,16 @@ process_team_stats <- function(tossups_df, bonuses_df, team1, team2) {
     )
 
   df %>%
-    left_join(
-      tibble(
-        team = unique(df$team),
-        new_team = c(team1, team2)
-      ),
-      by = join_by(team)
+    mutate(
+      team = ifelse(
+        team %>%
+          trimws() %>%
+          str_remove_all('\\.\\.\\.$') %>%
+          str_detect(team1),
+        team1,
+        team2
+      )
     ) %>%
-    select(-team) %>%
-    rename(team = new_team) %>%
     relocate(team, .before = 1) %>%
     mutate(opponent = rev(team), .after = team)
 }
@@ -155,9 +158,9 @@ matches <- matches %>%
 matches
 
 matches %>%
-  pull(team_stats) %>%
-  pluck(2) %>%
-  View()
+  select(report_game_id, round, player_stats) %>%
+  unnest(player_stats) %>%
+  mutate(across(tuh:pts, as.numeric))
 
 length(html_elements(page, '.boxScoreTable'))
 
