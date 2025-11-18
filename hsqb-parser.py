@@ -158,8 +158,7 @@ def process_game_yf(i, game, url):
         team2_players = raw_player_stats[0].iloc[:, 6:12].melt(
             id_vars=['TUH.1', '10.1', '-5.1', 'Tot.1'],
             var_name='team',
-            value_name='player'
-        ).rename(columns={'TUH.1': 'TUH', '10.1': '10', '-5.1': '-5', 'Tot.1': 'Tot'})
+            value_name='player').rename(columns={'TUH.1': 'TUH', '10.1': '10', '-5.1': '-5', 'Tot.1': 'Tot'})
         player_stats = pd.concat([team1_players, team2_players])
         player_stats = player_stats[~player_stats['player'].isin(
             ['Total,', 'Total'])]
@@ -279,7 +278,7 @@ def process_game_yf(i, game, url):
         player_stats = player_stats.rename(
             columns={'15': 'powers', '10': 'gets', '-5': 'negs', 'Tot': 'pts'})
 
-        bonuses = re.split('(?<!push)\;\s', game['bonuses'][9:])
+        bonuses = re.split('(?<=PPB)\;\s', game['bonuses'][9:])
         bonuses = pd.DataFrame(
             [
                 {
