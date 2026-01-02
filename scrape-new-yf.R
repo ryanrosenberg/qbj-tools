@@ -2,13 +2,13 @@ library(tidyverse)
 library(rvest)
 library(reticulate)
 library(magrittr)
-use_python('/home/ryanr345/.pyenv/shims/python')
+# use_python('/home/ryanr345/.pyenv/shims/python')
 
-# use_python('/opt/homebrew/bin/python3')
+use_python('/opt/homebrew/bin/python3')
 source_python('scrape-page.py')
 
 page <- scrape_page(
-  'https://hsquizbowl.org/db/tournaments/9847/stats/overall/games/'
+  'https://hsquizbowl.org/db/tournaments/10010/stats/results/games/'
   # 'https://hsquizbowl.org/db/tournaments/9801/stats/all_games/games/'
 ) %>%
   read_html()
@@ -17,6 +17,12 @@ old_page <- scrape_page(
   'https://hsquizbowl.org/db/tournaments/9879/stats/complete/games/'
 ) %>%
   read_html()
+
+clean_team_name <- function(str) {
+  str %>%
+    str_sub(end = min(25, nchar(str))) %>%
+    trimws()
+}
 
 process_player_stats <- function(df, team1, team2) {
   if (ncol(df) == 6) {
@@ -37,7 +43,7 @@ process_player_stats <- function(df, team1, team2) {
         team %>%
           trimws() %>%
           str_remove_all('\\.\\.\\.$') %>%
-          str_detect(team1),
+          str_detect(clean_team_name(team1)),
         team1,
         team2
       )
@@ -77,7 +83,7 @@ process_team_stats <- function(tossups_df, bonuses_df, team1, team2) {
         team %>%
           trimws() %>%
           str_remove_all('\\.\\.\\.$') %>%
-          str_detect(team1),
+          str_detect(clean_team_name(team1)),
         team1,
         team2
       )
@@ -121,14 +127,19 @@ matches <- match_meta %>%
   mutate(
     scorelines = scorelines %>% html_text() %>% trimws()
   ) %>%
-  filter(str_detect(scorelines, 'by forfeit$', negate = T)) %>%
+  filter(
+    str_detect(scorelines, 'by forfeit$', negate = T),
+    str_detect(scorelines, 'Not played$', negate = T)
+  ) %>%
   mutate(
     team1_name = str_extract(scorelines, ".+(?=\\d+,)") %>%
       str_remove_all("[-\\d]+$") %>%
       trimws(),
     scorelines = str_remove(scorelines, team1_name) %>%
       str_remove('[^,]*,\\s'),
-    team2_name = str_remove(scorelines, "[-\\d]+$") %>%
+    team2_name = scorelines %>%
+      str_remove("\\s\\(OT\\)$") %>%
+      str_remove("[-\\d]+$") %>%
       trimws()
   ) %>%
   select(id, round, team1_name, team2_name)
@@ -162,7 +173,12 @@ matches %>%
   unnest(player_stats) %>%
   mutate(across(tuh:pts, as.numeric))
 
-length(html_elements(page, '.boxScoreTable'))
+matches %>%
+  select(report_game_id, round, player_stats) %>%
+  unnest(player_stats) %>%
+  mutate(across(tuh:pts, as.numeric)) %>%
+  distinct(player, team) %>%
+  arrange(player)
 
 list(
   "player_stats" = matches %>%

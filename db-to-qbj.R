@@ -1,7 +1,7 @@
 library(tidyverse)
 library(DBI)
 
-bp <- dbConnect(RSQLite::SQLite(), "database.db")
+bp <- dbConnect(RSQLite::SQLite(), "../../buzzpoint-migrator/database copy.db")
 
 buzzes <- dbGetQuery(
   bp,
@@ -91,10 +91,11 @@ buzzes %>%
   )
 
 process_game <- function(game_id, tournament_slug) {
+  print(game_id)
   if (!dir.exists('test_qbjs')) {
     dir.create('test_qbjs')
   }
-
+  
   if (!dir.exists(glue::glue('test_qbjs/{tournament_slug}'))) {
     dir.create(glue::glue('test_qbjs/{tournament_slug}'))
     dir.create(glue::glue('test_qbjs/{tournament_slug}/game_files'))
@@ -116,7 +117,7 @@ process_game <- function(game_id, tournament_slug) {
     )
   ) %>%
     as_tibble()
-
+  
   bonuses <- dbGetQuery(
     bp,
     glue::glue(
@@ -133,9 +134,12 @@ process_game <- function(game_id, tournament_slug) {
     )
   ) %>%
     as_tibble()
-
+  
+  bsplit <- bonuses %>% 
+    split(.$question_number)
+  
   bonus_num <- 1
-
+  
   match_questions <- map(
     1:20,
     function(qnum) {
@@ -151,25 +155,28 @@ process_game <- function(game_id, tournament_slug) {
           "question_number" = qnum
         )
       )
-
+      
       if (
         qnum %in%
-          buzzes$question_number &
-          buzzes %>%
-            filter(question_number == qnum) %>%
-            pull(value) %>%
-            max() >
-            0
+        buzzes$question_number &
+        buzzes %>%
+        filter(question_number == qnum) %>%
+        pull(value) %>%
+        max() >
+        0
       ) {
         tu$bonus = list(
           "question" = list(
             "parts" = 3,
             "type" = "bonus",
-            "question_number" = bonus_num
+            "question_number" = bsplit %>% 
+              pluck(bonus_num) %>%
+              pull(question_number) %>% 
+              pluck(1)
           ),
           "parts" = list(
-            bonuses %>%
-              filter(question_number == bonus_num) %>%
+            bsplit %>% 
+              pluck(bonus_num) %>%
               pull(value) %>%
               process_bonus()
           )
@@ -181,7 +188,7 @@ process_game <- function(game_id, tournament_slug) {
       )
     }
   )
-
+  
   team_bonuses <- dbGetQuery(
     bp,
     "
@@ -200,7 +207,7 @@ process_game <- function(game_id, tournament_slug) {
     summarize(
       bonus_points = sum(value)
     )
-
+  
   team_buzzes <- dbGetQuery(
     bp,
     "
@@ -217,7 +224,7 @@ process_game <- function(game_id, tournament_slug) {
   ) %>%
     as_tibble() %>%
     count(player, team, value)
-
+  
   teams <- dbGetQuery(
     bp,
     glue::glue(
@@ -233,7 +240,7 @@ process_game <- function(game_id, tournament_slug) {
     )
   ) %>%
     gather(spot, team)
-
+  
   match_teams <- map(
     teams$team,
     \(x) {
@@ -281,7 +288,7 @@ process_game <- function(game_id, tournament_slug) {
       )
     }
   )
-
+  
   meta <- dbGetQuery(
     bp,
     glue::glue(
@@ -294,7 +301,7 @@ process_game <- function(game_id, tournament_slug) {
     "
     )
   )
-
+  
   qbj <-
     list(
       "tossups_read" = 20,
@@ -304,7 +311,10 @@ process_game <- function(game_id, tournament_slug) {
       "packets" = meta$packet[[1]]
     ) %>%
     jsonlite::toJSON(auto_unbox = T)
-
+  
+  print(glue::glue(
+    'test_qbjs/{tournament_slug}/game_files/Round_{meta$round[[1]]}_{teams$team[[1]]}_{teams$team[[2]]}.qbj'
+  ))
   write_file(
     qbj,
     glue::glue(
@@ -315,26 +325,44 @@ process_game <- function(game_id, tournament_slug) {
 
 dbGetQuery(
   bp,
-  "SELECT 
-  g.id as game_id ,
+  glue::glue_sql(
+    .con = bp,
+    "SELECT 
+  g.id as game_id,
   t.slug as tournament_slug
     FROM game g
     LEFT JOIN round r on g.round_id = r.id
-    LEFT JOIN tournament t on t.id = r.tournament_id"
-) %>%
+    LEFT JOIN tournament t on t.id = r.tournament_id
+    where t.id in ({tournament_ids*})"
+  )
+) %>% 
   pwalk(process_game)
 
+tournament_ids <- dbGetQuery(
+  bp,
+  "SELECT distinct 
+    t.id,
+    t.slug as tournament_slug,
+  t.name
+    FROM game g
+    LEFT JOIN round r on g.round_id = r.id
+    LEFT JOIN tournament t on t.id = r.tournament_id"
+) %>% 
+  as_tibble() %>% 
+  filter(str_detect(name, "2023") | str_detect(name, "2024 ACF Regionals")) %>% 
+  filter(str_detect(name, "ILLIAC", negate = T)) %>% 
+  pull(id)
 
 process_packet <- function(packet_id, set_name, set_edition_name, packet_name) {
   if (!dir.exists('test_packets')) {
     dir.create('test_packets')
   }
-
+  
   if (!dir.exists(glue::glue('test_packets/{set_name}'))) {
     dir.create(glue::glue('test_packets/{set_name}'))
     dir.create(glue::glue('test_packets/{set_name}/editions'))
   }
-
+  
   if (
     !dir.exists(glue::glue(
       'test_packets/{set_name}/editions/{set_edition_name}'
@@ -347,7 +375,7 @@ process_packet <- function(packet_id, set_name, set_edition_name, packet_name) {
       'test_packets/{set_name}/editions/{set_edition_name}/packet_files'
     ))
   }
-
+  
   tossups <- dbGetQuery(
     bp,
     glue::glue(
@@ -368,7 +396,7 @@ process_packet <- function(packet_id, set_name, set_edition_name, packet_name) {
   ) %>%
     as_tibble() %>%
     filter(!is.na(question))
-
+  
   bonuses <- dbGetQuery(
     bp,
     glue::glue(
@@ -391,7 +419,7 @@ process_packet <- function(packet_id, set_name, set_edition_name, packet_name) {
     filter(
       !is.na(leadin)
     )
-
+  
   packet <- list(
     "tossups" = tossups %>%
       pmap(
@@ -420,7 +448,7 @@ process_packet <- function(packet_id, set_name, set_edition_name, packet_name) {
       )
   ) %>%
     jsonlite::toJSON(auto_unbox = T)
-
+  
   write_file(
     packet,
     glue::glue(
@@ -430,6 +458,8 @@ process_packet <- function(packet_id, set_name, set_edition_name, packet_name) {
 }
 dbGetQuery(
   bp,
+  glue::glue_sql(
+    .con = bp,
   "SELECT 
   p.id as packet_id,
   qs.slug as set_name,
@@ -437,9 +467,160 @@ dbGetQuery(
   p.name as packet_name
     from question_set_edition qse
     left join question_set qs on qse.question_set_id = qs.id
-    left join packet p on qse.id = p.question_set_edition_id"
+    left join tournament t on qse.id = t.question_set_edition_id
+    left join packet p on qse.id = p.question_set_edition_id
+    where t.id in ({tournament_ids*})"
+  )
 ) %>%
-  as_tibble() %>%
+  as_tibble() %>% 
   pwalk(
     process_packet
   )
+
+
+
+metadata_styles <- dbGetQuery(
+  bp,
+  glue::glue_sql(
+    .con = bp,
+    "SELECT 
+    qs.id, qs.name,
+  q.metadata, q.author
+    from question_set_edition qse
+    left join question_set qs on qse.question_set_id = qs.id
+    left join tournament t on qse.id = t.question_set_edition_id
+    left join packet p on qse.id = p.question_set_edition_id
+    left join packet_question pq on p.id = pq.packet_id
+    left join question q on pq.question_id = q.id
+    where t.id in ({tournament_ids*})"
+  )
+) %>% 
+  as_tibble() %>% 
+  mutate(type = case_when(
+    str_detect(metadata, ",", negate = T) ~ 2,
+    str_detect(name, "NSC") ~ 4,
+    str_detect(name, "NASAT") ~ 5,
+    T ~ 1
+  )) %>% 
+  count(id, name, type) %>% 
+  group_by(id, name) %>% 
+  slice_max(order_by = n, n = 1) %>% 
+  select(type) %>% 
+  ungroup()
+
+write_question_set_index_file <- function(id, name, slug, difficulty, type){
+  index <- list(
+    "name" = name,
+    "slug" = slug,
+    "difficulty" = difficulty,
+    "metadataStyle" = type
+  )  
+  
+  write_file(
+    index %>% jsonlite::toJSON(auto_unbox = T),
+    glue::glue(
+      'test_packets/{slug}/index.json'
+    )
+  )
+}
+
+write_question_set_edition_index_file <- function(
+    id, name, slug, edition_name, edition_slug, date, difficulty
+){
+  index <- list(
+    "name" = edition_name,
+    "slug" = edition_slug,
+    "date" = date
+  )  
+  
+  write_file(
+    index %>% jsonlite::toJSON(auto_unbox = T),
+    glue::glue(
+      'test_packets/{slug}/editions/{edition_slug}/index.json'
+    )
+  )
+}
+
+dbGetQuery(
+  bp,
+  glue::glue_sql(
+    .con = bp,
+    "SELECT 
+    distinct
+  qs.*,
+  qse.name as edition_name,
+  qse.slug as edition_slug,
+  qse.date as date
+    from question_set_edition qse
+    left join question_set qs on qse.question_set_id = qs.id
+    left join tournament t on qse.id = t.question_set_edition_id
+    left join packet p on qse.id = p.question_set_edition_id
+    where t.id in ({tournament_ids*})"
+  )
+) %>%
+  as_tibble() %>% 
+  pmap(write_question_set_edition_index_file)
+
+dbGetQuery(
+  bp,
+  glue::glue_sql(
+    .con = bp,
+    "SELECT 
+    distinct
+  qs.*
+    from question_set_edition qse
+    left join question_set qs on qse.question_set_id = qs.id
+    left join tournament t on qse.id = t.question_set_edition_id
+    left join packet p on qse.id = p.question_set_edition_id
+    where t.id in ({tournament_ids*})"
+  )
+) %>%
+  as_tibble() %>% 
+  left_join(metadata_styles) %>% 
+  pmap(write_question_set_index_file)
+
+dbReadTable(bp, "tournament") %>% 
+  as_tibble()
+
+write_tournament_index_file <- function(
+    name, slug, set_name, edition, location, level, start_date, end_date
+    ){
+  index <- list(
+    "name" = name,
+    "slug" = slug,
+    "set" = set_name,
+    "edition" = edition,
+    "location" = location,
+    "level" = level,
+    "start_date" = start_date,
+    "end_date" = end_date
+  )  
+  
+  write_file(
+    index %>% jsonlite::toJSON(auto_unbox = T),
+    glue::glue(
+      'test_qbjs/{slug}/index.json'
+    )
+  )
+} 
+
+dbGetQuery(
+  bp,
+  glue::glue_sql(
+    .con = bp,
+    "SELECT 
+    distinct
+  t.*, 
+  qs.name as set_name,
+  qse.name as edition
+    from question_set_edition qse
+    left join question_set qs on qse.question_set_id = qs.id
+    left join tournament t on qse.id = t.question_set_edition_id
+    left join packet p on qse.id = p.question_set_edition_id
+    where t.id in ({tournament_ids*})"
+  )
+) %>%
+  as_tibble() %>% 
+  select(name, slug, set_name, edition, location, level, start_date, end_date) %>% 
+  pmap(write_tournament_index_file)
+
